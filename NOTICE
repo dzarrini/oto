@@ -1,0 +1,13 @@
+Project: oto
+
+This project links against FFTW3.
+
+FFTW copyright notices (as published by FFTW):
+- Copyright (C) 2003, 2007-11 Matteo Frigo
+- Copyright (C) 2003, 2007-11 Massachusetts Institute of Technology
+
+FFTW license:
+- GNU General Public License, version 2 or (at your option) any later version.
+
+Repository license:
+- GNU General Public License v2.0 or later (GPL-2.0-or-later). See LICENSE.
