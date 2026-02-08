@@ -4,34 +4,33 @@
 #include <spa/debug/types.h>
 #include <spa/param/audio/format-utils.h>
 #include <spa/param/audio/type-info.h>
+#include <string.h>
 
 #define FFT_FRAMES 2048
-#define BUCKETS 64
-#define DB_FLOOR -80.0
-#define DB_CEIL  -20.0
+#define DECAY_RATE 0.90
+#define BAR_WIDTH 20
+#define MAG_SCALE 0.02
 
 struct data {
   struct pw_main_loop *loop;
   struct pw_stream *stream;
   struct spa_audio_info format;
 
+  uint32_t channels;
+  uint32_t rate;
+
   uint32_t time_index;
   double timebuf[FFT_FRAMES];
   double window[FFT_FRAMES];
   fftw_complex frequency[FFT_FRAMES / 2 + 1];
   fftw_plan plan;
+  double mag[FFT_FRAMES / 2 + 1];
 
-  double power[FFT_FRAMES / 2 + 1];
-  double bars[BUCKETS];
+  double peak_bass;
+  double peak_mid;
+  double peak_treble;
 };
-
-static void draw_bars_vertical(const double *bars, int nbars, int H) {
-  uint32_t i = 0;
-  for (i = 0; i < nbars; ++i) {
-    printf("%d: [%f]\n", i, bars[i]);
-  }
-  fflush(stdout);
-}
+typedef struct data Data;
 
 static void populate_hann_window(double* window, uint32_t n) {
   uint32_t i;
@@ -40,42 +39,101 @@ static void populate_hann_window(double* window, uint32_t n) {
   }
 }
 
-static void compute_power(fftw_complex frequency[], double* power, uint32_t n) {
+static void compute_mag(fftw_complex frequency[], double* mag, uint32_t n) {
   uint32_t i;
   double re, im;
+  const double scale = 1.0 / FFT_FRAMES;
   for (i = 0; i < n; ++i) {
     re = frequency[i][0];
     im = frequency[i][1];
-    power[i] = re * re + im * im;
+    mag[i] = sqrt(re * re + im * im) * scale;
   }
 }
 
-static void compute_bars(double* power, double* bars, uint32_t n) {
-  double sum;
-  uint32_t i, count;
-  uint32_t b0, b1;
-  uint32_t stride = n / BUCKETS;
-  for (i = 0; i < BUCKETS; ++i) {
-    b0 = i * stride;
-    b1 = (i == BUCKETS - 1) ? n : (b0 + stride);
+static double get_band_energy(
+    double* mag,
+    double freq_min,
+    double freq_max,
+    double freq_resolution) {
+  uint32_t bin_min, bin_max;
+  bin_min = freq_min / freq_resolution;
+  bin_max = freq_max / freq_resolution;
+  bin_max = fmin(bin_max, FFT_FRAMES / 2); 
 
-    sum = 0;
-    count = 0;
-    for (uint32_t b = b0; b < b1; b++) {
-      if (b == 0) continue;
-      sum += power[b];
-      count++;
-    }
-    bars[i] = (count > 0) ? sum / (double)count : 0.0;
-    bars[i] = 10.0 * log10(1e-12 + bars[i]);
-    bars[i] = (bars[i] - DB_FLOOR) / (DB_CEIL - DB_FLOOR);
-    if (bars[i] < 0) bars[i] = 0;
-    if (bars[i] > 1) bars[i] = 1;
+  if (bin_min >= bin_max) return 0;
+
+  double energy = 0;
+  for (uint32_t i = bin_min; i < bin_max; ++i) {
+    energy += mag[i];
   }
+  energy = energy / (bin_max - bin_min);
+  energy = fmin(energy, 1);
+  return energy;
+}
+
+static double get_peak_energy(double peak_freq, double freq) {
+  if (freq > peak_freq) return freq;
+  return fmax(freq, peak_freq * DECAY_RATE);
+}
+
+static int bar_fill(double value, int width) {
+  if (value < 0) value = 0;
+  if (value > 1) value = 1;
+  return (int)lround(value * width);
+}
+
+static void make_band_bar(char *out, size_t out_size, double value, double peak, int width) {
+  int filled = bar_fill(value / MAG_SCALE, width);
+  int peak_pos = bar_fill(peak / MAG_SCALE, width) - 1;
+
+  if (out_size < (size_t)(width + 1)) return;
+
+  for (int i = 0; i < width; ++i) {
+    out[i] = (i < filled) ? '#' : '.';
+  }
+
+  if (peak_pos >= 0 && peak_pos < width) {
+    out[peak_pos] = '|';
+  }
+  out[width] = '\0';
+}
+
+static void visualize(Data* data) {
+    if (data->rate == 0) return;
+    double freq_resolution = (double)data->rate / FFT_FRAMES;
+    char bass_bar[BAR_WIDTH + 1];
+    char mid_bar[BAR_WIDTH + 1];
+    char treble_bar[BAR_WIDTH + 1];
+
+    // Apply Hann Window.
+    for(int j = 0; j < FFT_FRAMES; ++j) {
+      data->timebuf[j] *= data->window[j];
+    }
+    fftw_execute(data->plan);
+    compute_mag(data->frequency, data->mag, FFT_FRAMES / 2 + 1);
+
+    // Extract raw frequency bands.
+    double bass_raw = get_band_energy(data->mag, 20, 250, freq_resolution);
+    double mid_raw = get_band_energy(data->mag, 250, 2000, freq_resolution);
+    double treble_raw = get_band_energy(data->mag, 2000, 8000, freq_resolution);
+
+    data->peak_bass = get_peak_energy(data->peak_bass, bass_raw);
+    data->peak_mid = get_peak_energy(data->peak_mid, mid_raw);
+    data->peak_treble = get_peak_energy(data->peak_treble, treble_raw);
+
+    make_band_bar(bass_bar, sizeof(bass_bar), bass_raw, data->peak_bass, BAR_WIDTH);
+    make_band_bar(mid_bar, sizeof(mid_bar), mid_raw, data->peak_mid, BAR_WIDTH);
+    make_band_bar(treble_bar, sizeof(treble_bar), treble_raw, data->peak_treble, BAR_WIDTH);
+
+    printf("\r\033[2K");
+    printf("Bass   [%s] r:%0.3f p:%0.3f  ", bass_bar, bass_raw, data->peak_bass);
+    printf("Mid   [%s] r:%0.3f p:%0.3f  ", mid_bar, mid_raw, data->peak_mid);
+    printf("Treble [%s] r:%0.3f p:%0.3f", treble_bar, treble_raw, data->peak_treble);
+    fflush(stdout);
 }
 
 static void on_process(void *userdata) {
-  struct data *data = userdata;
+  Data *data = userdata;
   struct pw_buffer *b;
   struct spa_buffer *buf;
   float *samples;
@@ -93,23 +151,18 @@ static void on_process(void *userdata) {
     return;
   }
 
-  n_channels = data->format.info.raw.channels;
+  n_channels = data->channels;
   n_samples = buf->datas[0].chunk->size / sizeof(float);
 
-  // TODO(zarrini): Only process 1 channel only.
+  // TODO: Only process 1 channel only.
   for (n = 0, i = 0; n < n_samples; n += n_channels, i++) {
     data->timebuf[data->time_index++] = (double)samples[n];
     if (data->time_index == FFT_FRAMES) {
       data->time_index = 0;
-      for(int j = 0; j < FFT_FRAMES; ++j) {
-        data->timebuf[j] *= data->window[j];
-      }
-      fftw_execute(data->plan);
-      compute_power(data->frequency, data->power, FFT_FRAMES / 2 + 1);
-      compute_bars(data->power, data->bars, FFT_FRAMES / 2 + 1);
+      visualize(data);
     }
   }
-  draw_bars_vertical(data->bars, BUCKETS, 80);
+
   pw_stream_queue_buffer(data->stream, b);
 }
 
@@ -132,18 +185,21 @@ static void on_param_changed(void *userdata, uint32_t id,
     return;
 
   if (data->format.info.raw.format != SPA_AUDIO_FORMAT_F32_LE) {
-    fprintf(stderr, "unexpected format: exepcted F32_LE; got %s\n",
+    fprintf(stderr, "unexpected format: expected F32_LE; got %s\n",
             spa_debug_type_find_name(spa_type_audio_format,
                                      data->format.info.raw.format));
-    exit(1);
+    return;
   }
 
+  data->rate = data->format.info.raw.rate;
+  data->channels = data->format.info.raw.channels;
   printf("got audio format:\n");
   printf("  format: %d (%s)\n", data->format.info.raw.format,
          spa_debug_type_find_name(spa_type_audio_format,
                                   data->format.info.raw.format));
-  printf("  capturing rate: %dx%d\n", data->format.info.raw.rate,
-         data->format.info.raw.channels);
+  printf("  capturing rate: %dx%d\n", data->rate,
+         data->channels);
+  fflush(stdout);
 }
 
 static const struct pw_stream_events stream_events = {
@@ -193,5 +249,6 @@ int main(int argc, char *argv[]) {
   pw_stream_destroy(data.stream);
   pw_main_loop_destroy(data.loop);
   pw_deinit();
+  printf("\n");
   return 0;
 }
