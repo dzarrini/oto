@@ -1,4 +1,6 @@
+#include <curses.h>
 #include <fftw3.h>
+#include <locale.h>
 #include <math.h>
 #include <pipewire/pipewire.h>
 #include <spa/debug/types.h>
@@ -8,8 +10,20 @@
 
 #define FFT_FRAMES 2048
 #define DECAY_RATE 0.90
-#define BAR_WIDTH 20
-#define MAG_SCALE 0.02
+#define MAG_SCALE 0.025
+
+#define DISPLAY_FRAMES 80
+#define WIDTH 100
+
+struct display_data {
+  int index;
+  int y, x;
+  double *bass;
+  double *peak_bass;
+  double bass_;
+  double peak_bass_;
+};
+typedef struct display_data DisplayData;
 
 struct data {
   struct pw_main_loop *loop;
@@ -26,20 +40,18 @@ struct data {
   fftw_plan plan;
   double mag[FFT_FRAMES / 2 + 1];
 
-  double peak_bass;
-  double peak_mid;
-  double peak_treble;
+  DisplayData display_data;
 };
 typedef struct data Data;
 
-static void populate_hann_window(double* window, uint32_t n) {
+static void populate_hann_window(double *window, uint32_t n) {
   uint32_t i;
   for (i = 0; i < n; ++i) {
-    window[i] = 0.5 - 0.5*cos((2 * M_PI * i) / (n - 1));
+    window[i] = 0.5 - 0.5 * cos((2 * M_PI * i) / (n - 1));
   }
 }
 
-static void compute_mag(fftw_complex frequency[], double* mag, uint32_t n) {
+static void compute_mag(fftw_complex frequency[], double *mag, uint32_t n) {
   uint32_t i;
   double re, im;
   const double scale = 1.0 / FFT_FRAMES;
@@ -50,17 +62,15 @@ static void compute_mag(fftw_complex frequency[], double* mag, uint32_t n) {
   }
 }
 
-static double get_band_energy(
-    double* mag,
-    double freq_min,
-    double freq_max,
-    double freq_resolution) {
+static double get_band_energy(double *mag, double freq_min, double freq_max,
+                              double freq_resolution) {
   uint32_t bin_min, bin_max;
   bin_min = freq_min / freq_resolution;
   bin_max = freq_max / freq_resolution;
-  bin_max = fmin(bin_max, FFT_FRAMES / 2); 
+  bin_max = fmin(bin_max, FFT_FRAMES / 2);
 
-  if (bin_min >= bin_max) return 0;
+  if (bin_min >= bin_max)
+    return 0;
 
   double energy = 0;
   for (uint32_t i = bin_min; i < bin_max; ++i) {
@@ -72,64 +82,87 @@ static double get_band_energy(
 }
 
 static double get_peak_energy(double peak_freq, double freq) {
-  if (freq > peak_freq) return freq;
+  if (freq > peak_freq)
+    return freq;
   return fmax(freq, peak_freq * DECAY_RATE);
 }
 
-static int bar_fill(double value, int width) {
-  if (value < 0) value = 0;
-  if (value > 1) value = 1;
-  return (int)lround(value * width);
+static double bar_fill(double value, int width) {
+  if (value < 0)
+    value = 0;
+  if (value > 1)
+    value = 1;
+  return value * width;
 }
 
-static void make_band_bar(char *out, size_t out_size, double value, double peak, int width) {
-  int filled = bar_fill(value / MAG_SCALE, width);
-  int peak_pos = bar_fill(peak / MAG_SCALE, width) - 1;
-
-  if (out_size < (size_t)(width + 1)) return;
-
-  for (int i = 0; i < width; ++i) {
-    out[i] = (i < filled) ? '#' : '.';
-  }
-
-  if (peak_pos >= 0 && peak_pos < width) {
-    out[peak_pos] = '|';
-  }
-  out[width] = '\0';
-}
-
-static void visualize(Data* data) {
-    if (data->rate == 0) return;
-    double freq_resolution = (double)data->rate / FFT_FRAMES;
-    char bass_bar[BAR_WIDTH + 1];
-    char mid_bar[BAR_WIDTH + 1];
-    char treble_bar[BAR_WIDTH + 1];
-
-    // Apply Hann Window.
-    for(int j = 0; j < FFT_FRAMES; ++j) {
-      data->timebuf[j] *= data->window[j];
+// TODO: this is only done for bass. Change it later.
+static void make_band_bar(DisplayData *display_data) {
+  double value;
+  int idx;
+  for (int j = 0; j < display_data->x; j++) {
+    idx = display_data->index - j;
+    if (idx < 0) {
+      idx = display_data->x + idx;
     }
-    fftw_execute(data->plan);
-    compute_mag(data->frequency, data->mag, FFT_FRAMES / 2 + 1);
+    value = display_data->bass[idx];
+    double d_filled = bar_fill(value / MAG_SCALE, WIDTH);
+    int filled = d_filled;
+    for (int i = 0; i < filled; ++i) {
+      mvwprintw(stdscr, display_data->y - i, display_data->x + 2 - j, "█");
+    }
+    d_filled = d_filled - (double)filled;
+    if (d_filled > 0.875) {
+      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▇");
+    } else if (d_filled > 0.75) {
+      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▆");
+    } else if (d_filled > 0.625) {
+      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▅");
+    } else if (d_filled > 0.5) {
+      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▄");
+    } else if (d_filled > 0.375) {
+      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▃");
+    } else if (d_filled > 0.25) {
+      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▂");
+    } else if (d_filled > 0.125) {
+      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▁");
+    }
+  }
+  refresh();
+}
 
-    // Extract raw frequency bands.
-    double bass_raw = get_band_energy(data->mag, 20, 250, freq_resolution);
-    double mid_raw = get_band_energy(data->mag, 250, 2000, freq_resolution);
-    double treble_raw = get_band_energy(data->mag, 2000, 8000, freq_resolution);
+static void visualize(Data *data) {
+  clear();
+  if (data->rate == 0)
+    return;
+  double freq_resolution = (double)data->rate / FFT_FRAMES;
+  DisplayData *display_data = &data->display_data;
+  display_data->index = (display_data->index + 1) % display_data->x;
+  uint32_t index = display_data->index;
+  double bass;
+  double peak_bass;
 
-    data->peak_bass = get_peak_energy(data->peak_bass, bass_raw);
-    data->peak_mid = get_peak_energy(data->peak_mid, mid_raw);
-    data->peak_treble = get_peak_energy(data->peak_treble, treble_raw);
+  // Apply Hann Window.
+  for (int j = 0; j < FFT_FRAMES; ++j) {
+    data->timebuf[j] *= data->window[j];
+  }
+  fftw_execute(data->plan);
+  compute_mag(data->frequency, data->mag, FFT_FRAMES / 2 + 1);
 
-    make_band_bar(bass_bar, sizeof(bass_bar), bass_raw, data->peak_bass, BAR_WIDTH);
-    make_band_bar(mid_bar, sizeof(mid_bar), mid_raw, data->peak_mid, BAR_WIDTH);
-    make_band_bar(treble_bar, sizeof(treble_bar), treble_raw, data->peak_treble, BAR_WIDTH);
+  // Extract raw frequency bands.
+  bass = get_band_energy(data->mag, 20, 250, freq_resolution);
+  // mid = get_band_energy(data->mag, 250, 2000, freq_resolution);
+  // treble = get_band_energy(data->mag, 2000, 8000, freq_resolution);
 
-    printf("\r\033[2K");
-    printf("Bass   [%s] r:%0.3f p:%0.3f  ", bass_bar, bass_raw, data->peak_bass);
-    printf("Mid   [%s] r:%0.3f p:%0.3f  ", mid_bar, mid_raw, data->peak_mid);
-    printf("Treble [%s] r:%0.3f p:%0.3f", treble_bar, treble_raw, data->peak_treble);
-    fflush(stdout);
+  peak_bass = get_peak_energy(display_data->peak_bass_, bass);
+  // peak_mid = get_peak_energy(display_data->peak_mid_, mid);
+  // peak_treble = get_peak_energy(display_data->peak_treble_, treble);
+
+  // Set display data.
+  display_data->bass[index] = (bass + display_data->bass_) / 2;
+  display_data->bass_ = bass;
+  display_data->peak_bass[index] = peak_bass;
+  display_data->peak_bass_ = peak_bass;
+  make_band_bar(display_data);
 }
 
 static void on_process(void *userdata) {
@@ -197,8 +230,7 @@ static void on_param_changed(void *userdata, uint32_t id,
   printf("  format: %d (%s)\n", data->format.info.raw.format,
          spa_debug_type_find_name(spa_type_audio_format,
                                   data->format.info.raw.format));
-  printf("  capturing rate: %dx%d\n", data->rate,
-         data->channels);
+  printf("  capturing rate: %dx%d\n", data->rate, data->channels);
   fflush(stdout);
 }
 
@@ -209,13 +241,46 @@ static const struct pw_stream_events stream_events = {
 };
 
 int main(int argc, char *argv[]) {
-  struct data data;
+  // Init ncurses.
+  setlocale(LC_ALL, "en_US.UTF-8");
+  initscr();
+  noecho();
+  cbreak();
+
+  noqiflush();
+  keypad(stdscr, 1);
+  curs_set(0);
+
+  if (has_colors() == 0 && can_change_color() == 0) {
+    endwin();
+    exit(1);
+  }
+
+  // Init color pair for ncurses.
+  use_default_colors();
+  start_color();
+  init_color(15, 875, 547, 449);
+  init_pair(1, 15, -1);
+  attron(COLOR_PAIR(1));
+
+  int y, x;
+  getmaxyx(stdscr, y, x);
+
+  // Init Pipewire.
+  Data data;
   memset(&data, 0, sizeof(data));
 
   populate_hann_window(data.window, FFT_FRAMES);
   data.plan = fftw_plan_dft_r2c_1d(FFT_FRAMES, data.timebuf, data.frequency,
-                                    FFTW_MEASURE);
+                                   FFTW_MEASURE);
   data.time_index = 0;
+  data.display_data.index = 0;
+  data.display_data.x = x;
+  data.display_data.y = y;
+  data.display_data.bass = malloc(x * sizeof(double));
+  data.display_data.peak_bass = malloc(x * sizeof(double));
+  memset(data.display_data.bass, 0, x * sizeof(double));
+  memset(data.display_data.peak_bass, 0, x * sizeof(double));
 
   const struct spa_pod *params[1];
   uint8_t buffer[1024];
@@ -243,6 +308,8 @@ int main(int argc, char *argv[]) {
   pw_main_loop_run(data.loop);
 
   // cleanup.
+  attroff(COLOR_PAIR(1));
+  endwin();
   if (data.plan != NULL) {
     fftw_destroy_plan(data.plan);
   }
