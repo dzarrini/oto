@@ -1,6 +1,6 @@
 # oto
 
-`oto` is a terminal audio visualizer written in C. It captures live audio using PipeWire, runs a real-time FFT, and renders simple bass/mid/treble bars in the terminal.
+`oto` is a terminal audio visualizer written in C. It captures live audio using PipeWire, runs a real-time FFT, and renders a bass visualization with `ncurses`.
 
 The name **Oto** comes from the Japanese word for sound (音, "oto").
 
@@ -10,8 +10,9 @@ The name **Oto** comes from the Japanese word for sound (音, "oto").
 - Buffers `2048` frames and applies a Hann window to reduce spectral leakage.
 - Runs a real-to-complex FFT with FFTW (`fftw_plan_dft_r2c_1d`).
 - Computes magnitudes per frequency bin.
-- Aggregates energy into three coarse bands: bass (`20-250 Hz`), mid (`250-2000 Hz`), and treble (`2000-8000 Hz`)
-- Tracks peak values with a decay factor and prints bar/peak data on one terminal line.
+- Aggregates energy into coarse bands (currently bass only: `20-250 Hz`).
+- Tracks peak values with a decay factor and renders a full-width bar visualization with `ncurses` (orange).
+- Averages consecutive bass measurements per bar to smooth spikes.
 
 ## Computation Notes
 
@@ -20,7 +21,7 @@ The current processing loop is synchronous in the PipeWire stream callback:
 1. Pull buffer from PipeWire.
 2. Copy one channel into the time-domain ring (`timebuf`).
 3. Every `FFT_FRAMES` samples, run windowing + FFT + magnitude + band extraction.
-4. Print the visualization with `printf` + `fflush`.
+4. Render the visualization with `ncurses`.
 5. Return buffer to PipeWire.
 
 This keeps the implementation compact, but heavy computation and terminal I/O happen in the real-time processing path.
@@ -43,11 +44,13 @@ Requirements:
 - `gcc`
 - PipeWire dev package (`libpipewire-0.3` via `pkgconf`)
 - FFTW (`libfftw3`)
+- ncurses (`ncurses`)
 
 Dependencies (development headers/libraries):
 
 - PipeWire: `libpipewire-0.3` (`pipewire` + development package)
 - FFTW3: `fftw3` (`libfftw3` + development package)
+- ncurses: `ncurses` (development package)
 - `pkgconf`/`pkg-config` for compiler/linker flags
 
 Commands:
@@ -63,10 +66,19 @@ Clean:
 make clean
 ```
 
+## Current Limitations
+
+- Visualization height is fixed (not tied to terminal height).
+- Bass-only view (mid/treble bands currently disabled).
+- Rendering and FFT run in the PipeWire callback, which can block.
+- Exit is not yet fully graceful (cleanup improvements pending).
+
 ## TODO
 
-- Migrate visualization rendering to `ncurses` for cleaner, flicker-resistant terminal output.
-- Avoid blocking the active PipeWire processing thread with expensive computations and repeated `printf`/`fflush` calls.
+- Make visualization height dynamic per terminal window.
+- Add graceful exit/cleanup.
+- Let users specify visualization color.
+- Reintroduce mid/treble bands and multi-band view.
 - Move FFT + rendering work to another thread and keep the audio callback minimal.
 - Add a historical buffer (time-series history) to track band energy changes over time for richer visualization.
 
@@ -78,19 +90,19 @@ Install dependencies with your distro package manager:
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential pkg-config libpipewire-0.3-dev libfftw3-dev
+sudo apt install -y build-essential pkg-config libpipewire-0.3-dev libfftw3-dev libncurses-dev
 ```
 
 ### Fedora
 
 ```bash
-sudo dnf install -y gcc make pkgconf-pkg-config pipewire-devel fftw-devel
+sudo dnf install -y gcc make pkgconf-pkg-config pipewire-devel fftw-devel ncurses-devel
 ```
 
 ### Arch Linux
 
 ```bash
-sudo pacman -S --needed base-devel pkgconf pipewire fftw
+sudo pacman -S --needed base-devel pkgconf pipewire fftw ncurses
 ```
 
 ## Third-Party Attribution
