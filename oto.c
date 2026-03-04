@@ -127,11 +127,11 @@ static void make_band_bar(DisplayData *display_data) {
       mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▁");
     }
   }
-  refresh();
+  wnoutrefresh(stdscr);
 }
 
 static void visualize(Data *data) {
-  clear();
+  erase();
   if (data->rate == 0)
     return;
   double freq_resolution = (double)data->rate / FFT_FRAMES;
@@ -163,6 +163,7 @@ static void visualize(Data *data) {
   display_data->peak_bass[index] = peak_bass;
   display_data->peak_bass_ = peak_bass;
   make_band_bar(display_data);
+  doupdate();
 }
 
 static void on_process(void *userdata) {
