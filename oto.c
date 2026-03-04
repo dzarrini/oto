@@ -8,9 +8,9 @@
 #include <spa/param/audio/type-info.h>
 #include <string.h>
 
-#define FFT_FRAMES 2048
+#define FFT_FRAMES 3072
 #define DECAY_RATE 0.90
-#define MAG_SCALE 0.025
+#define MAG_SCALE 0.035
 
 #define DISPLAY_FRAMES 80
 #define WIDTH 100
@@ -108,23 +108,23 @@ static void make_band_bar(DisplayData *display_data) {
     double d_filled = bar_fill(value / MAG_SCALE, WIDTH);
     int filled = d_filled;
     for (int i = 0; i < filled; ++i) {
-      mvwprintw(stdscr, display_data->y - i, display_data->x + 2 - j, "█");
+      mvwprintw(stdscr, display_data->y - i, display_data->x - j, "█");
     }
     d_filled = d_filled - (double)filled;
     if (d_filled > 0.875) {
-      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▇");
+      mvwprintw(stdscr, display_data->y - filled, display_data->x - j, "▇");
     } else if (d_filled > 0.75) {
-      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▆");
+      mvwprintw(stdscr, display_data->y - filled, display_data->x - j, "▆");
     } else if (d_filled > 0.625) {
-      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▅");
+      mvwprintw(stdscr, display_data->y - filled, display_data->x - j, "▅");
     } else if (d_filled > 0.5) {
-      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▄");
+      mvwprintw(stdscr, display_data->y - filled, display_data->x - j, "▄");
     } else if (d_filled > 0.375) {
-      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▃");
+      mvwprintw(stdscr, display_data->y - filled, display_data->x - j, "▃");
     } else if (d_filled > 0.25) {
-      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▂");
+      mvwprintw(stdscr, display_data->y - filled, display_data->x - j, "▂");
     } else if (d_filled > 0.125) {
-      mvwprintw(stdscr, display_data->y - filled, display_data->x + 2 - j, "▁");
+      mvwprintw(stdscr, display_data->y - filled, display_data->x - j, "▁");
     }
   }
   wnoutrefresh(stdscr);
@@ -193,9 +193,9 @@ static void on_process(void *userdata) {
     data->timebuf[data->time_index++] = (double)samples[n];
     if (data->time_index == FFT_FRAMES) {
       data->time_index = 0;
-      visualize(data);
     }
   }
+  visualize(data);
 
   pw_stream_queue_buffer(data->stream, b);
 }
