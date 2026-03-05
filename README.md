@@ -11,8 +11,15 @@ The name **Oto** comes from the Japanese word for sound (音, "oto").
 - Runs a real-to-complex FFT with FFTW (`fftw_plan_dft_r2c_1d`).
 - Computes magnitudes per frequency bin.
 - Aggregates energy into coarse bands (currently bass only: `20-250 Hz`).
-- Tracks peak values with a decay factor and renders a full-width bar visualization with `ncurses` (orange).
 - Averages consecutive bass measurements per bar to smooth spikes.
+
+## Demo
+This is current demo for music playing in the background. Blue is Bass, Green is Mid, and Orange is Treble frequencies visualized.
+
+<p align="center">
+<img width="475" height="520" alt="visualizor_demo" src="https://github.com/user-attachments/assets/9c769fb9-4102-4228-8da0-d9dc39a0f6b2" />
+</p>
+
 
 ## Computation Notes
 
