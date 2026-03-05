@@ -7,10 +7,10 @@
 #include <spa/param/audio/format-utils.h>
 #include <spa/param/audio/type-info.h>
 #include <string.h>
+#include <unistd.h>
 
 #define FFT_FRAMES 3072
 #define DECAY_RATE 0.90
-#define MAG_SCALE 0.035
 
 #define DISPLAY_FRAMES 80
 #define WIDTH 100
@@ -22,6 +22,7 @@ struct display_data {
   double *peak_bass;
   double bass_;
   double peak_bass_;
+  double scale;
 };
 typedef struct display_data DisplayData;
 
@@ -32,6 +33,9 @@ struct data {
 
   uint32_t channels;
   uint32_t rate;
+
+  short low_f;
+  short high_f;
 
   uint32_t time_index;
   double timebuf[FFT_FRAMES];
@@ -105,7 +109,7 @@ static void make_band_bar(DisplayData *display_data) {
       idx = display_data->x + idx;
     }
     value = display_data->bass[idx];
-    double d_filled = bar_fill(value / MAG_SCALE, WIDTH);
+    double d_filled = bar_fill(value / display_data->scale, WIDTH);
     int filled = d_filled;
     for (int i = 0; i < filled; ++i) {
       mvwprintw(stdscr, display_data->y - i, display_data->x - j, "█");
@@ -149,9 +153,7 @@ static void visualize(Data *data) {
   compute_mag(data->frequency, data->mag, FFT_FRAMES / 2 + 1);
 
   // Extract raw frequency bands.
-  bass = get_band_energy(data->mag, 20, 250, freq_resolution);
-  // mid = get_band_energy(data->mag, 250, 2000, freq_resolution);
-  // treble = get_band_energy(data->mag, 2000, 8000, freq_resolution);
+  bass = get_band_energy(data->mag, data->low_f, data->high_f, freq_resolution);
 
   peak_bass = get_peak_energy(display_data->peak_bass_, bass);
   // peak_mid = get_peak_energy(display_data->peak_mid_, mid);
@@ -242,6 +244,35 @@ static const struct pw_stream_events stream_events = {
 };
 
 int main(int argc, char *argv[]) {
+  // Get arguments.
+  short R, G, B;
+  short low_f, high_f;
+  double scale = 0.035;
+  low_f = 20, high_f = 250;
+  R = 875, G = 547, B = 449;
+  int opt;
+  while ((opt = getopt(argc, argv, "BMT")) != -1) {
+    switch (opt) {
+    case 'B':
+      scale = 0.035;
+      low_f = 20, high_f = 250;
+      R = 16, G = 754, B = 883;
+      break;
+    case 'M':
+      scale = 0.01;
+      low_f = 250, high_f = 2000;
+      R = 688, G = 766, B = 0;
+      break;
+    case 'T':
+      scale = 0.004;
+      low_f = 2000, high_f = 8000;
+      R = 875, G = 547, B = 449;
+      break;
+    default:
+      fprintf(stderr, "Usage %s [-B] [-M] [-T]\n", argv[0]);
+      exit(0);
+    }
+  }
   // Init ncurses.
   setlocale(LC_ALL, "en_US.UTF-8");
   initscr();
@@ -260,7 +291,7 @@ int main(int argc, char *argv[]) {
   // Init color pair for ncurses.
   use_default_colors();
   start_color();
-  init_color(15, 875, 547, 449);
+  init_color(15, R, G, B);
   init_pair(1, 15, -1);
   attron(COLOR_PAIR(1));
 
@@ -274,7 +305,10 @@ int main(int argc, char *argv[]) {
   populate_hann_window(data.window, FFT_FRAMES);
   data.plan = fftw_plan_dft_r2c_1d(FFT_FRAMES, data.timebuf, data.frequency,
                                    FFTW_MEASURE);
+  data.low_f = low_f;
+  data.high_f = high_f;
   data.time_index = 0;
+  data.display_data.scale = scale;
   data.display_data.index = 0;
   data.display_data.x = x;
   data.display_data.y = y;
@@ -317,6 +351,5 @@ int main(int argc, char *argv[]) {
   pw_stream_destroy(data.stream);
   pw_main_loop_destroy(data.loop);
   pw_deinit();
-  printf("\n");
   return 0;
 }
