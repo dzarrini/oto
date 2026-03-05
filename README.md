@@ -1,17 +1,17 @@
 # oto
 
-`oto` is a terminal audio visualizer written in C. It captures live audio using PipeWire, runs a real-time FFT, and renders a bass visualization with `ncurses`.
+`oto` is a terminal audio visualizer written in C. It captures live audio using PipeWire, runs a real-time FFT, and renders a single-band visualization with `ncurses`.
 
 The name **Oto** comes from the Japanese word for sound (音, "oto").
 
 ## What It Does
 
 - Captures audio from PipeWire as `F32_LE` floating-point samples.
-- Buffers `2048` frames and applies a Hann window to reduce spectral leakage.
+- Buffers `3072` frames and applies a Hann window to reduce spectral leakage.
 - Runs a real-to-complex FFT with FFTW (`fftw_plan_dft_r2c_1d`).
 - Computes magnitudes per frequency bin.
-- Aggregates energy into coarse bands (currently bass only: `20-250 Hz`).
-- Averages consecutive bass measurements per bar to smooth spikes.
+- Aggregates energy into one selectable band at a time (Bass `20-250 Hz` via `-B` default, Mid `250-2000 Hz` via `-M`, Treble `2000-8000 Hz` via `-T`).
+- Averages consecutive measurements per bar to smooth spikes.
 
 ## Demo
 This is current demo for music playing in the background. Blue is Bass, Green is Mid, and Orange is Treble frequencies visualized.
@@ -20,14 +20,13 @@ This is current demo for music playing in the background. Blue is Bass, Green is
 <img width="475" height="520" alt="visualizor_demo" src="https://github.com/user-attachments/assets/9c769fb9-4102-4228-8da0-d9dc39a0f6b2" />
 </p>
 
-
 ## Computation Notes
 
 The current processing loop is synchronous in the PipeWire stream callback:
 
 1. Pull buffer from PipeWire.
 2. Copy one channel into the time-domain ring (`timebuf`).
-3. Every `FFT_FRAMES` samples, run windowing + FFT + magnitude + band extraction.
+3. Run windowing + FFT + magnitude + band extraction on each callback.
 4. Render the visualization with `ncurses`.
 5. Return buffer to PipeWire.
 
@@ -67,6 +66,15 @@ make
 make run
 ```
 
+Usage:
+
+```bash
+./oto            # Bass (default)
+./oto -B         # Bass
+./oto -M         # Mid
+./oto -T         # Treble
+```
+
 Clean:
 
 ```bash
@@ -76,16 +84,17 @@ make clean
 ## Current Limitations
 
 - Visualization height is fixed (not tied to terminal height).
-- Bass-only view (mid/treble bands currently disabled).
+- Width/height are captured at startup and do not update on resize.
 - Rendering and FFT run in the PipeWire callback, which can block.
 - Exit is not yet fully graceful (cleanup improvements pending).
+- Requires a UTF-8 terminal that supports custom colors.
 
 ## TODO
 
 - Make visualization height dynamic per terminal window.
 - Add graceful exit/cleanup.
 - Let users specify visualization color.
-- Reintroduce mid/treble bands and multi-band view.
+- Add multi-band view (simultaneous bass/mid/treble).
 - Move FFT + rendering work to another thread and keep the audio callback minimal.
 - Add a historical buffer (time-series history) to track band energy changes over time for richer visualization.
 
